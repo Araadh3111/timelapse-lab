@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TIMELAPSE LAB</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Oswald:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --surface: #111;
+    --border: #222;
+    --amber: #f5a623;
+    --amber-dim: #7a5010;
+    --red: #e63946;
+    --green: #2ec4b6;
+    --text: #e0e0e0;
+    --muted: #555;
+    --font-mono: 'Share Tech Mono', monospace;
+    --font-display: 'Oswald', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.07) 2px,
+      rgba(0,0,0,0.07) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .logo {
+    font-family: var(--font-display);
+    font-size: 1.8rem;
+    font-weight: 700;
+    letter-spacing: 6px;
+    color: var(--amber);
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--text); font-weight: 300; }
+
+  .sys-status {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.8;
+  }
+  .sys-status .dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  .sys-status .dot.alive { background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.5s infinite; }
+  .sys-status .dot.rec { background: var(--red); box-shadow: 0 0 6px var(--red); animation: pulse 0.8s infinite; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .preview-panel {
+    border-right: 1px solid var(--border);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .panel-label {
+    font-size: 0.65rem;
+    letter-spacing: 4px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  .video-frame {
+    position: relative;
+    background: #000;
+    border: 1px solid var(--border);
+    aspect-ratio: 16/9;
+    overflow: hidden;
+  }
+
+  .video-frame video, .video-frame canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .video-frame .corner {
+    position: absolute;
+    width: 16px; height: 16px;
+    border-color: var(--amber);
+    border-style: solid;
+    opacity: 0.7;
+  }
+  .corner.tl { top:8px; left:8px; border-width: 2px 0 0 2px; }
+  .corner.tr { top:8px; right:8px; border-width: 2px 2px 0 0; }
+  .corner.bl { bottom:8px; left:8px; border-width: 0 0 2px 2px; }
+  .corner.br { bottom:8px; right:8px; border-width: 0 2px 2px 0; }
+
+  .rec-badge {
+    position: absolute;
+    top: 12px; right: 12px;
+    background: rgba(230,57,70,0.9);
+    color: #fff;
+    font-size: 0.65rem;
+    letter-spacing: 3px;
+    padding: 3px 8px;
+    display: none;
+  }
+  .rec-badge.show { display: block; animation: pulse 0.8s infinite; }
+
+  .frame-ticker {
+    position: absolute;
+    bottom: 10px; left: 12px;
+    font-size: 0.65rem;
+    color: var(--amber);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .frame-ticker.show { opacity: 1; }
+
+  .timecode {
+    position: absolute;
+    bottom: 10px; right: 12px;
+    font-size: 0.65rem;
+    color: var(--muted);
+  }
+
+  /* Controls panel */
+  .controls-panel {
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .control-group {
+    border: 1px solid var(--border);
+    padding: 14px;
+  }
+
+  .ctrl-title {
+    font-family: var(--font-display);
+    font-size: 0.7rem;
+    letter-spacing: 3px;
+    color: var(--amber);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    margin-bottom: 6px;
+    color: var(--muted);
+  }
+  .stat-row span:last-child { color: var(--text); }
+
+  .slider-wrap {
+    margin: 10px 0;
+  }
+  .slider-wrap label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .slider-wrap label span { color: var(--amber); }
+
+  input[type=range] {
+    width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 2px;
+    background: var(--border);
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px; height: 12px;
+    background: var(--amber);
+    border-radius: 0;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    background: linear-gradient(to right, var(--amber) 0%, var(--amber) var(--pct, 0%), var(--border) var(--pct, 0%));
+  }
+
+  .btn {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.8rem;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    padding: 11px 20px;
+    border: 1px solid currentColor;
+    background: transparent;
+    cursor: pointer;
+    width: 100%;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .btn-record {
+    color: var(--red);
+    margin-bottom: 8px;
+  }
+  .btn-record:hover { background: var(--red); color: #fff; }
+  .btn-record.recording { background: rgba(230,57,70,0.15); animation: border-pulse 0.8s infinite; }
+  @keyframes border-pulse { 0%,100%{border-color:var(--red)} 50%{border-color:transparent} }
+
+  .btn-generate {
+    color: var(--green);
+    margin-bottom: 8px;
+  }
+  .btn-generate:hover:not(:disabled) { background: var(--green); color: #000; }
+  .btn-generate:disabled { color: var(--muted); cursor: not-allowed; border-color: var(--muted); }
+
+  .btn-download {
+    color: var(--amber);
+  }
+  .btn-download:hover:not(:disabled) { background: var(--amber); color: #000; }
+  .btn-download:disabled { color: var(--muted); cursor: not-allowed; border-color: var(--muted); }
+
+  /* Progress bar */
+  .progress-wrap {
+    display: none;
+    margin-top: 8px;
+  }
+  .progress-wrap.show { display: block; }
+  .progress-bar-bg {
+    height: 2px;
+    background: var(--border);
+    position: relative;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--green);
+    width: 0%;
+    transition: width 0.1s;
+    box-shadow: 0 0 8px var(--green);
+  }
+  .progress-label {
+    font-size: 0.65rem;
+    color: var(--muted);
+    margin-top: 4px;
+    text-align: center;
+  }
+
+  /* Result panel */
+  .result-panel {
+    grid-column: 1 / -1;
+    padding: 24px;
+    border-top: 1px solid var(--border);
+    display: none;
+  }
+  .result-panel.show { display: block; }
+
+  .result-video {
+    max-width: 640px;
+    border: 1px solid var(--border);
+  }
+  .result-video video {
+    width: 100%;
+    display: block;
+  }
+
+  /* Footer */
+  footer {
+    padding: 12px 32px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.65rem;
+    color: var(--muted);
+    border-top: 1px solid var(--border);
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(40px);
+    background: var(--surface);
+    border: 1px solid var(--amber);
+    color: var(--amber);
+    font-size: 0.75rem;
+    letter-spacing: 2px;
+    padding: 10px 24px;
+    opacity: 0;
+    transition: all 0.3s;
+    z-index: 1000;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Hidden canvas for processing */
+  #offscreen { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Time<span>lapse</span> Lab</div>
+  <div class="sys-status">
+    <div><span class="dot" id="camDot"></span><span id="camStatus">CAMERA OFFLINE</span></div>
+    <div><span class="dot" id="recDot"></span><span id="recStatus">STANDBY</span></div>
+    <div id="sysTime"></div>
+  </div>
+</header>
+
+<main>
+  <div class="preview-panel">
+    <div class="panel-label">Live Feed</div>
+    <div class="video-frame" id="liveFrame">
+      <video id="liveVideo" autoplay muted playsinline></video>
+      <div class="corner tl"></div>
+      <div class="corner tr"></div>
+      <div class="corner bl"></div>
+      <div class="corner br"></div>
+      <div class="rec-badge" id="recBadge">● REC</div>
+      <div class="frame-ticker" id="frameTicker">▶ FRAME <span id="frameNum">0</span></div>
+      <div class="timecode" id="timecode">00:00:00</div>
+    </div>
+
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar-bg">
+        <div class="progress-bar-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-label" id="progressLabel">Rendering timelapse...</div>
+    </div>
+  </div>
+
+  <div class="controls-panel">
+    <div class="control-group">
+      <div class="ctrl-title">Session Stats</div>
+      <div class="stat-row"><span>FRAMES CAPTURED</span><span id="statFrames">0</span></div>
+      <div class="stat-row"><span>RECORD TIME</span><span id="statTime">0:00</span></div>
+      <div class="stat-row"><span>TIMELAPSE SPEED</span><span id="statSpeed">—</span></div>
+      <div class="stat-row"><span>OUTPUT DURATION</span><span id="statOut">—</span></div>
+      <div class="stat-row"><span>RESOLUTION</span><span id="statRes">—</span></div>
+    </div>
+
+    <div class="control-group">
+      <div class="ctrl-title">Capture Interval</div>
+      <div class="slider-wrap">
+        <label>Frame every <span id="intervalVal">500</span>ms</label>
+        <input type="range" id="intervalSlider" min="100" max="5000" step="100" value="500">
+      </div>
+      <div style="font-size:0.65rem;color:var(--muted);">Lower = more frames, smoother result</div>
+    </div>
+
+    <div class="control-group">
+      <div class="ctrl-title">Playback FPS</div>
+      <div class="slider-wrap">
+        <label>Output at <span id="fpsVal">30</span> FPS</label>
+        <input type="range" id="fpsSlider" min="10" max="60" step="5" value="30">
+      </div>
+    </div>
+
+    <div class="control-group">
+      <div class="ctrl-title">Controls</div>
+      <button class="btn btn-record" id="recordBtn" onclick="toggleRecord()">
+        <span id="recordIcon">⏺</span> <span id="recordLabel">Start Recording</span>
+      </button>
+      <button class="btn btn-generate" id="generateBtn" onclick="generateTimelapse()" disabled>
+        ⚡ Generate Timelapse
+      </button>
+      <button class="btn btn-download" id="downloadBtn" onclick="downloadVideo()" disabled>
+        ↓ Download Video
+      </button>
+    </div>
+  </div>
+
+  <div class="result-panel" id="resultPanel">
+    <div class="panel-label" style="margin-bottom:12px;">Timelapse Output</div>
+    <div class="result-video">
+      <video id="resultVideo" controls></video>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span>TIMELAPSE LAB v1.0 — BROWSER NATIVE</span>
+  <span>NO UPLOAD · FULLY LOCAL · WORKS OFFLINE</span>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<canvas id="offscreen"></canvas>
+
+<script>
+  let stream = null;
+  let frames = [];
+  let captureInterval = null;
+  let isRecording = false;
+  let recordStart = null;
+  let resultBlob = null;
+  let timecodeInterval = null;
+  let captureIntervalMs = 500;
+  let outputFPS = 30;
+
+  const liveVideo = document.getElementById('liveVideo');
+  const offscreen = document.getElementById('offscreen');
+  const ctx = offscreen.getContext('2d');
+
+  // Clock
+  setInterval(() => {
+    document.getElementById('sysTime').textContent = new Date().toLocaleTimeString();
+  }, 1000);
+
+  // Init camera
+  async function initCamera() {
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 }, audio: false });
+      liveVideo.srcObject = stream;
+      await liveVideo.play();
+
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      document.getElementById('statRes').textContent = `${settings.width}×${settings.height}`;
+      offscreen.width = settings.width || 1280;
+      offscreen.height = settings.height || 720;
+
+      document.getElementById('camDot').className = 'dot alive';
+      document.getElementById('camStatus').textContent = 'CAMERA ONLINE';
+    } catch(e) {
+      showToast('Camera access denied — allow camera permission');
+      document.getElementById('camStatus').textContent = 'ACCESS DENIED';
+    }
+  }
+
+  // Sliders
+  const intervalSlider = document.getElementById('intervalSlider');
+  intervalSlider.addEventListener('input', () => {
+    captureIntervalMs = parseInt(intervalSlider.value);
+    document.getElementById('intervalVal').textContent = captureIntervalMs;
+    updateSliderFill(intervalSlider);
+    updateStats();
+  });
+
+  const fpsSlider = document.getElementById('fpsSlider');
+  fpsSlider.addEventListener('input', () => {
+    outputFPS = parseInt(fpsSlider.value);
+    document.getElementById('fpsVal').textContent = outputFPS;
+    updateSliderFill(fpsSlider);
+    updateStats();
+  });
+
+  function updateSliderFill(slider) {
+    const min = parseFloat(slider.min), max = parseFloat(slider.max), val = parseFloat(slider.value);
+    const pct = ((val - min) / (max - min)) * 100;
+    slider.style.setProperty('--pct', pct + '%');
+  }
+  updateSliderFill(intervalSlider);
+  updateSliderFill(fpsSlider);
+
+  function captureFrame() {
+    if (!stream) return;
+    ctx.drawImage(liveVideo, 0, 0, offscreen.width, offscreen.height);
+    offscreen.toBlob(blob => {
+      frames.push(blob);
+      const n = frames.length;
+      document.getElementById('frameNum').textContent = n;
+      document.getElementById('statFrames').textContent = n;
+      updateStats();
+    }, 'image/jpeg', 0.85);
+  }
+
+  function updateStats() {
+    const n = frames.length;
+    const speed = captureIntervalMs >= 1000
+      ? `${captureIntervalMs/1000}s/frame`
+      : `${captureIntervalMs}ms/frame`;
+    document.getElementById('statSpeed').textContent = speed;
+    if (n > 0) {
+      const outSecs = (n / outputFPS).toFixed(1);
+      document.getElementById('statOut').textContent = `~${outSecs}s`;
+    }
+  }
+
+  function toggleRecord() {
+    if (!stream) { showToast('Camera not ready'); return; }
+    if (!isRecording) startRecording(); else stopRecording();
+  }
+
+  function startRecording() {
+    frames = [];
+    isRecording = true;
+    recordStart = Date.now();
+
+    document.getElementById('recordBtn').classList.add('recording');
+    document.getElementById('recordLabel').textContent = 'Stop Recording';
+    document.getElementById('recordIcon').textContent = '⏹';
+    document.getElementById('recBadge').classList.add('show');
+    document.getElementById('frameTicker').classList.add('show');
+    document.getElementById('recDot').className = 'dot rec';
+    document.getElementById('recStatus').textContent = 'RECORDING';
+    document.getElementById('generateBtn').disabled = true;
+    document.getElementById('downloadBtn').disabled = true;
+    resultBlob = null;
+
+    captureInterval = setInterval(captureFrame, captureIntervalMs);
+
+    timecodeInterval = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - recordStart) / 1000);
+      const h = Math.floor(elapsed/3600).toString().padStart(2,'0');
+      const m = Math.floor((elapsed%3600)/60).toString().padStart(2,'0');
+      const s = (elapsed%60).toString().padStart(2,'0');
+      document.getElementById('timecode').textContent = `${h}:${m}:${s}`;
+
+      const mins = Math.floor(elapsed/60), secs = elapsed%60;
+      document.getElementById('statTime').textContent = `${mins}:${secs.toString().padStart(2,'0')}`;
+    }, 1000);
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    clearInterval(captureInterval);
+    clearInterval(timecodeInterval);
+
+    document.getElementById('recordBtn').classList.remove('recording');
+    document.getElementById('recordLabel').textContent = 'Start Recording';
+    document.getElementById('recordIcon').textContent = '⏺';
+    document.getElementById('recBadge').classList.remove('show');
+    document.getElementById('recDot').className = 'dot';
+    document.getElementById('recStatus').textContent = 'STANDBY';
+
+    if (frames.length > 0) {
+      document.getElementById('generateBtn').disabled = false;
+      showToast(`${frames.length} frames captured — ready to render`);
+    }
+  }
+
+  async function generateTimelapse() {
+    if (frames.length === 0) { showToast('No frames captured'); return; }
+
+    document.getElementById('generateBtn').disabled = true;
+    document.getElementById('progressWrap').classList.add('show');
+
+    const w = offscreen.width, h = offscreen.height;
+    const renderCanvas = document.createElement('canvas');
+    renderCanvas.width = w; renderCanvas.height = h;
+    const rctx = renderCanvas.getContext('2d');
+
+    let recordedChunks = [];
+    const mr = new MediaRecorder(renderCanvas.captureStream(outputFPS), {
+      mimeType: getSupportedMime(),
+      videoBitsPerSecond: 8000000
+    });
+    mr.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+
+    const frameDelay = 1000 / outputFPS;
+    const total = frames.length;
+    const progressFill = document.getElementById('progressFill');
+    const progressLabel = document.getElementById('progressLabel');
+
+    mr.start();
+
+    for (let i = 0; i < total; i++) {
+      const blob = frames[i];
+      await drawBlobToCanvas(blob, rctx, w, h);
+      const pct = Math.round((i+1)/total*100);
+      progressFill.style.width = pct + '%';
+      progressLabel.textContent = `Rendering frame ${i+1} / ${total} (${pct}%)`;
+      await sleep(frameDelay);
+    }
+
+    mr.stop();
+    await new Promise(res => mr.onstop = res);
+
+    resultBlob = new Blob(recordedChunks, { type: getSupportedMime() });
+    const url = URL.createObjectURL(resultBlob);
+    const resultVideo = document.getElementById('resultVideo');
+    resultVideo.src = url;
+
+    document.getElementById('resultPanel').classList.add('show');
+    document.getElementById('downloadBtn').disabled = false;
+    document.getElementById('progressWrap').classList.remove('show');
+    document.getElementById('generateBtn').disabled = false;
+
+    showToast('Timelapse ready — scroll down to preview');
+    document.getElementById('resultPanel').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function drawBlobToCanvas(blob, rctx, w, h) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        rctx.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(url);
+        res();
+      };
+      img.onerror = rej;
+      img.src = url;
+    });
+  }
+
+  function getSupportedMime() {
+    const types = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+    return types.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function downloadVideo() {
+    if (!resultBlob) return;
+    const ext = resultBlob.type.includes('mp4') ? 'mp4' : 'webm';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(resultBlob);
+    a.download = `timelapse_${Date.now()}.${ext}`;
+    a.click();
+    showToast('Download started');
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 3000);
+  }
+
+  // Boot
+  initCamera();
+</script>
+</body>
+</html>
